@@ -8,8 +8,12 @@ const HISTORY_DIR = './user_conversation_history';
 const API_KEY = 'perplexity API KEY';
 const ADMIN_USER_IDS = ['ADMIN USER ID 1', 'ADMIN USER ID 2'];
 
-if (!fs.existsSync(HISTORY_DIR)) {
-  fs.mkdirSync(HISTORY_DIR);
+try {
+  if (!fs.existsSync(HISTORY_DIR)) {
+    fs.mkdirSync(HISTORY_DIR);
+  }
+} catch (error) {
+  console.error('にゃ〜ん、履歴ディレクトリの作成に失敗したにゃ:', error);
 }
 
 const initialSystemMessage = {
@@ -26,7 +30,12 @@ function isAdmin(userId) {
 
 function getUserHistory(userId) {
   const filePath = getUserHistoryPath(userId);
-  return fs.existsSync(filePath) ? JSON.parse(fs.readFileSync(filePath, 'utf8')) : [initialSystemMessage];
+  try {
+    return fs.existsSync(filePath) ? JSON.parse(fs.readFileSync(filePath, 'utf8')) : [initialSystemMessage];
+  } catch (error) {
+    console.error(`にゃ〜ん、ユーザー ${userId} の履歴の読み込みに失敗したにゃ:`, error);
+    return [initialSystemMessage];
+  }
 }
 
 function getUserHistoryPath(userId) {
@@ -34,12 +43,30 @@ function getUserHistoryPath(userId) {
 }
 
 function saveUserHistory(userId, history) {
-  fs.writeFileSync(getUserHistoryPath(userId), JSON.stringify(history, null, 2));
+  try {
+    fs.writeFileSync(getUserHistoryPath(userId), JSON.stringify(history, null, 2));
+  } catch (error) {
+    console.error(`にゃ〜ん、ユーザー ${userId} の履歴の保存に失敗したにゃ:`, error);
+  }
 }
 
 client.on('ready', () => {
   console.log(`${client.user.tag} が準備万端にゃ！何かお手伝いできるかにゃ？`);
   client.startTime = new Date();
+});
+
+client.on('error', (error) => {
+  if (error.code === 'TOKEN_INVALID') {
+    console.error('にゃ〜ん、トークンが無効だにゃ。トークンを確認して、必要なら再生成するにゃ。');
+  } else if (error.code === 'DISALLOWED_INTENTS') {
+    console.error('にゃ〜ん、必要な権限がないにゃ。Botの権限設定を確認するにゃ。');
+  } else if (error.httpStatus === 429) {
+    console.error('にゃ〜ん、リクエストが多すぎるにゃ。しばらく待ってからリトライするにゃ。');
+  } else if (error.code === 'MESSAGE_CONTENT_TYPE_INVALID') {
+    console.error('にゃ〜ん、メッセージが長すぎるにゃ。2000文字以内に収めるか、分割して送信するにゃ。');
+  } else {
+    console.error('にゃ〜ん、エラーが発生したにゃ:', error);
+  }
 });
 
 client.on('messageCreate', async (message) => {
@@ -50,23 +77,30 @@ client.on('messageCreate', async (message) => {
     const args = command.slice(PREFIX.length).trim().split(/ +/);
     const cmd = args.shift().toLowerCase();
 
-    switch (cmd) {
-      case 'ai':
-        await handleAICommand(message, args.join(' '));
-        break;
-      case 'del':
-        handleDeleteHistoryCommand(message);
-        break;
-      case 'prefix':
-        if (isAdmin(message.author.id)) {
-          handlePrefixCommand(message, args);
-        } else {
-          message.reply({ content: "にゃ〜ん、このコマンドは管理者しか使えないにゃ。", allowedMentions: { repliedUser: false } });
-        }
-        break;
-      case 'help':
-        handleHelpCommand(message);
-        break;
+    try {
+      switch (cmd) {
+        case 'ai':
+          await handleAICommand(message, args.join(' '));
+          break;
+        case 'del':
+          handleDeleteHistoryCommand(message);
+          break;
+        case 'prefix':
+          if (isAdmin(message.author.id)) {
+            handlePrefixCommand(message, args);
+          } else {
+            message.reply({ content: "にゃ〜ん、このコマンドは管理者しか使えないにゃ。", allowedMentions: { repliedUser: false } });
+          }
+          break;
+        case 'help':
+          handleHelpCommand(message);
+          break;
+        default:
+          message.reply({ content: "にゃ？そのコマンドは知らないにゃ。", allowedMentions: { repliedUser: false } });
+      }
+    } catch (error) {
+      console.error('にゃ〜ん、コマンド処理中にエラーが発生したにゃ:', error);
+      message.reply({ content: "にゃ〜ん、コマンドの処理中にエラーが発生したにゃ。", allowedMentions: { repliedUser: false } });
     }
   }
 });
@@ -76,7 +110,13 @@ async function handleAICommand(message, prompt) {
   let userHistory = getUserHistory(userId);
   userHistory.push({ role: 'user', content: prompt });
 
-  let loadingMessage = await message.reply(`にゃ〜、考え中にゃ...`);
+  let loadingMessage;
+  try {
+    loadingMessage = await message.reply(`にゃ〜、考え中にゃ...`);
+  } catch (error) {
+    console.error('にゃ〜ん、ローディングメッセージの送信に失敗したにゃ:', error);
+    return;
+  }
 
   try {
     const response = await fetch('https://api.perplexity.ai/chat/completions', {
@@ -106,8 +146,21 @@ async function handleAICommand(message, prompt) {
     userHistory.push({ role: 'assistant', content: result });
     saveUserHistory(userId, userHistory);
   } catch (error) {
-    console.error("にゃ〜ん、エラーが発生したにゃ:", error);
-    message.reply('にゃ〜ん、エラーが発生したにゃ。');
+    console.error("にゃ〜ん、AIの応答中にエラーが発生したにゃ:", error);
+    try {
+      if (error.code === 50035) {
+        console.error('にゃ〜ん、メッセージが長すぎるにゃ。2000文字以内に収めるか、分割して送信するにゃ。');
+        // メッセージを分割して送信する処理を追加
+        const chunks = result.match(/.{1,2000}/g) || [];
+        for (const chunk of chunks) {
+          await message.channel.send(chunk);
+        }
+      } else {
+        await loadingMessage.edit('にゃ〜ん、AIの応答中にエラーが発生したにゃ。');
+      }
+    } catch (editError) {
+      console.error('にゃ〜ん、エラーメッセージの編集に失敗したにゃ:', editError);
+    }
     saveUserHistory(userId, [initialSystemMessage]);
   }
 }
@@ -163,4 +216,6 @@ function handleHelpCommand(message) {
 }
 
 console.log('にゃ〜ん、ログイン中にゃ...');
-client.login("token");
+client.login("token").catch(error => {
+  console.error('にゃ〜ん、ログインに失敗したにゃ:', error);
+});
