@@ -1,4 +1,4 @@
-process.noDeprecation = true;
+process.noDeprecation = true;//警告の無効化にゃ
 const { Client } = require('discord.js-selfbot-v13');
 const fs = require('fs');
 const path = require('path');
